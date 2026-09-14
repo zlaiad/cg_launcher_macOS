@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+work/
+dist/
+releases/
+*.pcap
+*.pcapng
+*.log
+*.dmp
+.env
+__pycache__/
+*.pyc
