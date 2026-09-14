@@ -21,6 +21,7 @@ func XCTAssertThrowsError<T>(_ value: @autoclosure () throws -> T, _ handler: (E
         try suite.testSuccessResponseAndAccountRestrictions()
         try suite.testServerFailureDoesNotBecomeSession()
         try suite.testExpansionAssetArguments()
+        try suite.testSavedAccountsAndFailedAuthentication()
         print("PROTOCOL_CHECKS_OK assertions=\(checks)")
     }
 }
@@ -30,6 +31,47 @@ import XCTest
 #endif
 
 final class ProtocolTests: XCTestCase {
+    func testSavedAccountsAndFailedAuthentication() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("CGLauncherTests-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let file = base.appendingPathComponent("private/accounts.json")
+        let store = SavedAccountStore(fileURL: file)
+        let session = AuthenticatedSession(accounts: [], authenticatedAt: Date(), token: Array("TEST".utf8), serverStamp: 1, endpoint: nil)
+        XCTAssertEqual(try store.load().accounts.count, 0)
+        _ = try RememberedLogin.authenticate(username: "testAlpha", password: "firstPassword", regionID: 33, store: store) { session }
+        _ = try RememberedLogin.authenticate(username: "testBeta", password: "secondPassword", regionID: 36, store: store) { session }
+        // A fresh store simulates quitting and reopening the app.
+        let reopened = SavedAccountStore(fileURL: file)
+        XCTAssertEqual(try reopened.load().accounts.count, 2)
+        XCTAssertEqual(try reopened.load().selectedUsername, "testBeta")
+        XCTAssertEqual(try reopened.load().accounts.first(where: { $0.username == "testAlpha" })?.password, "firstPassword")
+        let before = try Data(contentsOf: file)
+        XCTAssertThrowsError(try RememberedLogin.authenticate(username: "testAlpha", password: "wrongPassword", regionID: 33, store: store) {
+            throw LauncherError.message("Synthetic authentication failure")
+        })
+        XCTAssertEqual(try Data(contentsOf: file), before)
+        XCTAssertThrowsError(try RememberedLogin.authenticate(username: "neverVerified", password: "wrongPassword", regionID: 33, store: store) {
+            throw LauncherError.message("Synthetic authentication failure")
+        })
+        XCTAssertEqual(try reopened.load().accounts.count, 2)
+        _ = try RememberedLogin.authenticate(username: "testAlpha", password: "updatedPassword", regionID: 36, store: store) { session }
+        try store.rememberGameAccount(username: "testAlpha", regionID: 36, gameAccount: "syntheticGame")
+        let alpha = try reopened.load().accounts.first(where: { $0.username == "testAlpha" })!
+        XCTAssertEqual(alpha.password, "updatedPassword")
+        XCTAssertEqual(alpha.regionID, 36)
+        XCTAssertEqual(alpha.gameAccountsByRegion["36"], "syntheticGame")
+        XCTAssertEqual(try reopened.load().accounts.count, 2)
+        let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as! NSNumber
+        XCTAssertEqual(mode.intValue & 0o777, 0o600)
+        let directoryMode = try FileManager.default.attributesOfItem(atPath: file.deletingLastPathComponent().path)[.posixPermissions] as! NSNumber
+        XCTAssertEqual(directoryMode.intValue & 0o777, 0o700)
+        // A damaged file must never silently erase the existing account collection.
+        let damaged = Data("invalid test data".utf8)
+        try damaged.write(to: file)
+        let outcome = try RememberedLogin.authenticate(username: "testAlpha", password: "verifiedPassword", regionID: 33, store: store) { session }
+        XCTAssertTrue(outcome.storageWarning != nil)
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+    }
     func testExpansionAssetArguments() throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
