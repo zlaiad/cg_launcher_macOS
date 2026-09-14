@@ -7,6 +7,7 @@ import shutil
 
 root = Path(__file__).resolve().parent.parent
 helper = root / 'work/cg_bridge.exe'
+helper.parent.mkdir(parents=True, exist_ok=True)
 subprocess.run(['i686-w64-mingw32-gcc', '-O2', '-Wall', '-Wextra', '-static', str(root / 'bridge/cg_bridge.c'), '-o', str(helper)], check=True)
 wine = '/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin/wine'
 command = [wine, '--bottle', 'CrossGate', 'Z:' + str(helper).replace('/', '\\')]

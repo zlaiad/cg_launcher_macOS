@@ -8,5 +8,11 @@ releases/
 *.log
 *.dmp
 .env
+.env.*
+accounts.json
+.accounts-*
+.idea/
+xcuserdata/
+*.xcuserstate
 __pycache__/
 *.pyc

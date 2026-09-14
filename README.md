@@ -4,6 +4,8 @@
 
 ## 使用
 
+打包好的应用位于 `dist/魔力宝贝启动器.app`，可将整个 `.app` 拖入 macOS 的“应用程序”文件夹。运行时不依赖源码目录或编译缓存，仍使用已安装的 CrossOver 和 `CrossGate` 容器。
+
 打开 `dist/魔力宝贝启动器.app`，选择大区，输入易玩通通行证 PID 和密码，点击“登录”。官方返回游戏账号列表后，选择账号并点击“启动游戏”。游戏端继续选择服务器、角色。
 
 - 支持本地官方配置中的牧羊双子、金牛两个怀旧大区。
@@ -61,6 +63,14 @@ zsh scripts/build.sh 'work/staged/魔力宝贝启动器.app'
 ```
 
 `scripts/test.sh` 可在仅安装 Command Line Tools 的环境执行同一组协议检查；完整 Xcode 环境也可使用 `swift test`。桥接测试只使用专属测试共享内存和合成数据，不操作真实认证票据或启动真实游戏。`--probe` 仅执行无账号的握手与加密心跳，不登录账号。
+
+## 仓库与临时文件
+
+Git 仓库保留源码、图标、构建/测试/分析脚本、协议文档和版本标签。`dist/` 中的应用和 `releases/` 中的各版本发布备份只保存在本地，不加入源码仓库。
+
+`work/` 是可重新生成的开发临时目录，`.build/` 是 Swift 编译缓存。初期约 4.66 GB 的目录占用主要来自完整游戏更新测试副本、Ghidra 工具及压缩包、反汇编文件和编译缓存，均已清理。这些文件与运行启动器无关；后续构建或测试会按需重新创建目录。
+
+`scripts/inspect_pe.py` 和 `scripts/probe_protocol.py` 是可选分析工具，分别需要 `pefile` / `capstone` 和 `pycryptodome`；正常构建与运行不需要这些 Python 依赖。Ghidra 导出脚本保存在 `scripts/ExportFunctions.java`，分析工具本体不随仓库分发。
 
 ## 已验证范围（2026-09-14）
 
