@@ -6,10 +6,13 @@ public enum GameRunner {
             throw LauncherError.message("认证结果不属于当前大区，请重新登录。")
         }
         var packet = Data("CGM1".utf8)
-        func string(_ value: String) {
-            let bytes = Data(value.utf8); packet.appendLE(UInt32(bytes.count)); packet.append(bytes)
+        func field(_ bytes: Data) {
+            packet.appendLE(UInt32(bytes.count)); packet.append(bytes)
         }
-        string(try session.handoff(for: account))
+        func string(_ value: String) {
+            field(Data(value.utf8))
+        }
+        field(try session.handoff(for: account))
         string(installation.windowsPath(installation.game))
         string(installation.windowsPath(installation.gameDirectory))
         let arguments = try installation.gameArguments(for: region)

@@ -62,24 +62,31 @@ static void append_quoted(wchar_t *dst, size_t *used, const wchar_t *s) {
     dst[*used] = 0;
     #undef PUT
 }
-static int self_test(void) {
+static void binary_test_payload(char *buffer) {
+    const char *prefix = "gid:synthetic glt:";
+    size_t n = strlen(prefix);
+    memcpy(buffer, prefix, n);
+    for (unsigned int i = 0; i < 32; i++) buffer[n + i] = (char)(0x80 + i);
+    memcpy(buffer + n + 32, ":1 ", 4);
+}
+static int self_test(const char *payload, int binary) {
     char name[80];
     snprintf(name, sizeof(name), "CGLauncherSelfTest_%lu", GetCurrentProcessId());
     HANDLE h = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 256, name);
     if (!h) return 30;
     char *v = MapViewOfFile(h, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 256);
     if (!v) { CloseHandle(h); return 31; }
-    strcpy(v, "synthetic-test-only");
+    memcpy(v, payload, strlen(payload) + 1);
     HANDLE h2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
     char *v2 = h2 ? MapViewOfFile(h2, FILE_MAP_READ, 0, 0, 256) : NULL;
-    int ok = v2 && strcmp(v2, "synthetic-test-only") == 0;
+    int ok = v2 && memcmp(v2, payload, strlen(payload) + 1) == 0;
     if (v2) UnmapViewOfFile(v2);
     if (h2) CloseHandle(h2);
     wchar_t self[MAX_PATH], command[32768] = {0}; size_t used = 0;
     if (!GetModuleFileNameW(NULL, self, MAX_PATH)) ok = 0;
     if (ok) {
         append_quoted(command, &used, self);
-        append_quoted(command, &used, L"--test-child");
+        append_quoted(command, &used, binary ? L"--test-binary-child" : L"--test-child");
         wchar_t *name_w = wide(name); append_quoted(command, &used, name_w); free(name_w);
         STARTUPINFOW startup = {0}; startup.cb = sizeof(startup);
         PROCESS_INFORMATION child = {0};
@@ -101,12 +108,14 @@ int main(int argc, char **argv) {
         printf("BRIDGE_LOCALE acp=%u\n", GetACP());
         return GetACP() == 936 ? 0 : 39;
     }
-    if (argc == 2 && strcmp(argv[1], "--self-test") == 0) return self_test();
-    if (argc == 3 && strcmp(argv[1], "--test-child") == 0) {
+    if (argc == 2 && strcmp(argv[1], "--self-test") == 0) return self_test("synthetic-test-only", 0);
+    if (argc == 3 && (strcmp(argv[1], "--test-child") == 0 || strcmp(argv[1], "--test-binary-child") == 0)) {
         if (strncmp(argv[2], "CGLauncherSelfTest_", 19)) return 36;
         HANDLE h = OpenFileMappingA(FILE_MAP_READ, FALSE, argv[2]);
         const char *v = h ? MapViewOfFile(h, FILE_MAP_READ, 0, 0, 256) : NULL;
-        int ok = v && strcmp(v, "synthetic-test-only") == 0;
+        char expected[256] = "synthetic-test-only";
+        if (strcmp(argv[1], "--test-binary-child") == 0) binary_test_payload(expected);
+        int ok = v && memcmp(v, expected, strlen(expected) + 1) == 0;
         char image[MAX_PATH];
         ok = ok && GetModuleFileNameA(NULL, image, MAX_PATH) && GetFileAttributesA(image) != INVALID_FILE_ATTRIBUTES;
         if (v) UnmapViewOfFile(v);
@@ -120,7 +129,8 @@ int main(int argc, char **argv) {
     if (strncmp(auth, "gid:", 4) || !strstr(auth, " glt:")) return 25;
     char *exe = read_string(4096), *cwd = read_string(4096);
     wchar_t *exe_w = wide(exe), *cwd_w = wide(cwd);
-    int validation = argc == 2 && strcmp(argv[1], "--validate-input") == 0;
+    int binary_validation = argc == 2 && strcmp(argv[1], "--validate-binary-input") == 0;
+    int validation = binary_validation || (argc == 2 && strcmp(argv[1], "--validate-input") == 0);
     if (!validation) { check_legacy_path(exe_w); check_legacy_path(cwd_w); }
     wchar_t command[32768] = {0}; size_t used = 0;
     append_quoted(command, &used, exe_w);
@@ -131,7 +141,10 @@ int main(int argc, char **argv) {
         append_quoted(command, &used, arg_w); free(arg_w); free(arg);
     }
     if (validation) {
-        int ok = strcmp(auth, "gid:synthetic glt:synthetic:1 ") == 0;
+        char expected[256] = "gid:synthetic glt:synthetic:1 ";
+        if (binary_validation) binary_test_payload(expected);
+        int ok = strlen(auth) == strlen(expected) && memcmp(auth, expected, strlen(expected)) == 0;
+        if (ok && binary_validation) ok = self_test(auth, 1) == 0;
         SecureZeroMemory(auth, strlen(auth)); free(auth);
         free(exe_w); free(cwd_w); free(exe); free(cwd);
         if (ok) puts("BRIDGE_STDIN_VALIDATED");

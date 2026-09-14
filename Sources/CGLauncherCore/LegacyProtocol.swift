@@ -54,23 +54,27 @@ public struct AuthenticatedSession: Sendable {
     let token: [UInt8]
     let serverStamp: UInt32
     let endpoint: BillingEndpoint?
-    public func handoff(for account: GameAccount) throws -> String {
+    public func handoff(for account: GameAccount) throws -> Data {
         guard accounts.contains(where: { $0.id == account.id && $0.canLaunch }),
               account.canLaunch, Date().timeIntervalSince(authenticatedAt) < 300 else {
             throw LauncherError.message("账号不可用或本次登录已过期，请重新验证。")
         }
         // The official callback copies the blob into a char[33], appends NUL,
         // and then appends it as a C string. Ignore any bytes after its first NUL.
-        let textToken = token.prefix(while: { $0 != 0 })
+        let tokenBytes = token.prefix(while: { $0 != 0 })
         guard !account.id.isEmpty, account.id.utf8.allSatisfy({ $0 > 32 && $0 < 127 && $0 != 58 }) else {
             throw LauncherError.message("服务器返回的游戏账号格式无法交接。")
         }
-        guard !textToken.isEmpty, textToken.allSatisfy({ $0 > 32 && $0 < 127 && $0 != 58 }) else {
-            throw LauncherError.message("服务器返回的认证令牌格式尚未支持（字段 \(token.count) 字节，文本 \(textToken.count) 字节）。")
+        guard token.count <= 32, !tokenBytes.isEmpty else {
+            throw LauncherError.message("服务器返回的认证令牌为空或超出长度限制，请重新登录。")
         }
-        let text = "gid:\(account.id) glt:\(String(decoding: textToken, as: UTF8.self)):\(String(serverStamp &+ 0x80000000, radix: 32)) "
-        guard text.utf8.count < 256 else { throw LauncherError.message("认证交接数据超出游戏限制。") }
-        return text
+        // This is a legacy byte string, not Unicode. Decoding/re-encoding a binary
+        // token would replace invalid UTF-8 bytes and invalidate the official ticket.
+        var data = Data("gid:\(account.id) glt:".utf8)
+        data.append(contentsOf: tokenBytes)
+        data.append(contentsOf: ":\(String(serverStamp &+ 0x80000000, radix: 32)) ".utf8)
+        guard data.count < 256 else { throw LauncherError.message("认证交接数据超出游戏限制。") }
+        return data
     }
 }
 

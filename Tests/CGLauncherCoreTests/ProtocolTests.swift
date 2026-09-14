@@ -23,6 +23,7 @@ func XCTAssertThrowsError<T>(_ value: @autoclosure () throws -> T, _ handler: (E
         try suite.testExpansionAssetArguments()
         try suite.testSavedAccountsAndFailedAuthentication()
         try suite.testUpdateConfigurationAndGuards()
+        try suite.testBinaryTokenHandoff()
         print("PROTOCOL_CHECKS_OK assertions=\(checks)")
     }
 }
@@ -171,9 +172,9 @@ final class ProtocolTests: XCTestCase {
         response.appendBE(0x80000001); response.appendBE(0)
         let session = try LegacyProtocol.parseLogin(response)
         XCTAssertEqual(session.accounts.count, 1)
-        XCTAssertEqual(try session.handoff(for: session.accounts[0]), "gid:gid1 glt:TEST:1 ")
+        XCTAssertEqual(try session.handoff(for: session.accounts[0]), Data("gid:gid1 glt:TEST:1 ".utf8))
         let padded = AuthenticatedSession(accounts: session.accounts, authenticatedAt: Date(), token: Array("TEST".utf8) + [0,0,0,0], serverStamp: 0x80000001, endpoint: nil)
-        XCTAssertEqual(try padded.handoff(for: padded.accounts[0]), "gid:gid1 glt:TEST:1 ")
+        XCTAssertEqual(try padded.handoff(for: padded.accounts[0]), Data("gid:gid1 glt:TEST:1 ".utf8))
         XCTAssertThrowsError(try LegacyProtocol.parseLogin(response.dropLast()))
         XCTAssertFalse(GameAccount(id: "blocked", status: -1, entitlement: 0, restriction: 0).canLaunch)
         XCTAssertFalse(GameAccount(id: "blocked", status: 0, entitlement: 1, restriction: 1).canLaunch)
@@ -185,5 +186,47 @@ final class ProtocolTests: XCTestCase {
         }
         var reader = PacketReader(Data([253,255,255,255,255]))
         XCTAssertThrowsError(try reader.length(maximum: 32))
+    }
+
+    func testBinaryTokenHandoff() throws {
+        let endpoint = BillingEndpoint(host: "127.0.0.1", port: 9030)
+        let account = GameAccount(id: "synthetic", status: 0, entitlement: 0, restriction: 0)
+        func session(_ bytes: [UInt8], date: Date = Date()) -> AuthenticatedSession {
+            AuthenticatedSession(accounts: [account], authenticatedAt: date, token: bytes, serverStamp: 0x80000001, endpoint: endpoint)
+        }
+        let prefix = Data("gid:synthetic glt:".utf8), suffix = Data(":1 ".utf8)
+        // Every non-NUL value is opaque, including colon, whitespace and invalid UTF-8.
+        for byte in UInt8(1)...UInt8(255) {
+            let token = [UInt8](repeating: byte, count: 32)
+            XCTAssertEqual(try session(token).handoff(for: account), prefix + Data(token) + suffix)
+        }
+        XCTAssertEqual(try session([0x80, 0xff, 0, 0xfe]).handoff(for: account), prefix + Data([0x80, 0xff]) + suffix)
+        XCTAssertThrowsError(try session([]).handoff(for: account))
+        XCTAssertThrowsError(try session([0, 1]).handoff(for: account))
+        XCTAssertThrowsError(try session([UInt8](repeating: 1, count: 33)).handoff(for: account))
+        XCTAssertThrowsError(try session([1], date: Date(timeIntervalSinceNow: -301)).handoff(for: account))
+        XCTAssertThrowsError(try session([1]).handoff(for: GameAccount(id: "other", status: 0, entitlement: 0, restriction: 0)))
+
+        // End-to-end serialization: a 32-byte binary server field stays identical in stdin.
+        let token = Array(UInt8(0x80)...UInt8(0x9f))
+        var response = Data([11]); response.appendBE(0); response.appendBE(0)
+        response.append(32); response.append(contentsOf: token)
+        response.append(contentsOf: [1,9]); response.append(contentsOf: "synthetic".utf8)
+        for _: Int in 0..<5 { response.append(1); response.appendBE(0) }
+        response.appendBE(0x80000001); response.appendBE(0)
+        let parsed = try LegacyProtocol.parseLogin(response, endpoint: endpoint)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CGBinaryToken-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for dir in ["bin", "bin/Puk2", "bin/Puk3"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(dir), withIntermediateDirectories: true)
+        }
+        try Data().write(to: root.appendingPathComponent("bin/Anime_1.bin"))
+        let region = GameRegion(id: 33, name: "synthetic", billing: [endpoint], arguments: [])
+        let install = Installation(bottle: root, wine: root, launcher: root, gameDirectory: root, regions: [region])
+        let packet = try GameRunner.prepareRequest(installation: install, session: parsed, account: parsed.accounts[0], region: region)
+        let expected = prefix + Data(token) + suffix
+        XCTAssertEqual(packet.prefix(4), Data("CGM1".utf8))
+        XCTAssertEqual(packet[4..<8], Data([UInt8(expected.count), 0, 0, 0]))
+        XCTAssertEqual(packet[8..<(8 + expected.count)], expected)
     }
 }

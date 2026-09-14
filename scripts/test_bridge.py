@@ -37,3 +37,12 @@ for arg in args: field(arg)
 result = subprocess.run(command + ['--validate-input'], input=packet, capture_output=True, timeout=20, env=env)
 assert result.returncode == 0 and b'BRIDGE_STDIN_VALIDATED' in result.stdout
 print('BRIDGE_CHECKS_OK shared_memory child_process unicode_paths legacy_ansi_image_path stdin_transport')
+
+# Exercise the actual stdin -> C byte string -> named mapping -> child process path.
+# Uses a test-only mapping, not the live game's authentication mapping.
+binary_auth = b'gid:synthetic glt:' + bytes(range(0x80, 0xa0)) + b':1 '
+original_length = struct.unpack_from('<I', packet, 4)[0]
+binary_packet = b'CGM1' + struct.pack('<I', len(binary_auth)) + binary_auth + packet[8 + original_length:]
+result = subprocess.run(command + ['--validate-binary-input'], input=binary_packet, capture_output=True, timeout=20, env=env)
+assert result.returncode == 0 and b'BRIDGE_STDIN_VALIDATED' in result.stdout and b'BRIDGE_SELF_TEST_OK' in result.stdout
+print('BINARY_TOKEN_BRIDGE_OK exact_32_bytes stdin shared_memory child_process')
