@@ -15,6 +15,7 @@ public struct GameRegion: Identifiable, Equatable, Sendable {
     public let name: String
     public let billing: [BillingEndpoint]
     public let arguments: [String]
+    public var patchServer: BillingEndpoint? = nil
 }
 
 public enum LauncherError: LocalizedError {
@@ -32,6 +33,7 @@ public struct Installation: Sendable {
     public let regions: [GameRegion]
 
     public var game: URL { gameDirectory.appendingPathComponent("cg_se_3000.exe") }
+    public var patcher: URL { gameDirectory.appendingPathComponent("Patcher_PUK3.exe") }
     public var bottleName: String { bottle.lastPathComponent }
 
     public static func discover(home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> Installation {
@@ -122,6 +124,8 @@ private final class RegionParser: NSObject, XMLParserDelegate {
     var name = ""
     var billing: [BillingEndpoint] = []
     var arguments: [String] = []
+    var patchHost = ""
+    var patchPort: UInt16?
     var inRegion = false
     var gameCode: String?
     var port: UInt16?
@@ -131,7 +135,7 @@ private final class RegionParser: NSObject, XMLParserDelegate {
         text = ""
         if elementName == "Region" {
             inRegion = true; id = Int(attributes["Code"] ?? "") ?? 0
-            name = ""; billing = []; arguments = []
+            name = ""; billing = []; arguments = []; patchHost = ""; patchPort = nil
         }
         if elementName == "BIP" { port = UInt16(attributes["Port"] ?? "") }
         if elementName == "Args" { gameCode = attributes["Gamecode"] }
@@ -141,13 +145,16 @@ private final class RegionParser: NSObject, XMLParserDelegate {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard inRegion else { return }
         if elementName == "Name" { name = value }
+        if elementName == "PIP" { patchHost = value }
+        if elementName == "PPort" { patchPort = UInt16(value) }
         if elementName == "BIP", let port, !value.isEmpty { billing.append(BillingEndpoint(host: value, port: port)) }
         if elementName == "Args", gameCode == "11" {
             arguments = value.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         }
         if elementName == "Region" {
             if !arguments.isEmpty, !billing.isEmpty, !name.contains("测试"), arguments.allSatisfy({ $0.range(of: #"^IP:\d+:\d{1,3}(\.\d{1,3}){3}:\d+$"#, options: .regularExpression) != nil }) {
-                regions.append(GameRegion(id: id, name: name, billing: billing, arguments: arguments))
+                let patch = patchPort.map { BillingEndpoint(host: patchHost, port: $0) }
+                regions.append(GameRegion(id: id, name: name, billing: billing, arguments: arguments, patchServer: patch))
             }
             inRegion = false
         }

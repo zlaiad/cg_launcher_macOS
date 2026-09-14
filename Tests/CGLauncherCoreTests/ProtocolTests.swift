@@ -22,6 +22,7 @@ func XCTAssertThrowsError<T>(_ value: @autoclosure () throws -> T, _ handler: (E
         try suite.testServerFailureDoesNotBecomeSession()
         try suite.testExpansionAssetArguments()
         try suite.testSavedAccountsAndFailedAuthentication()
+        try suite.testUpdateConfigurationAndGuards()
         print("PROTOCOL_CHECKS_OK assertions=\(checks)")
     }
 }
@@ -31,6 +32,53 @@ import XCTest
 #endif
 
 final class ProtocolTests: XCTestCase {
+    func testUpdateConfigurationAndGuards() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("CGUpdateTests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let xml = """
+        <Regionlist><Regions><Region Code="33"><Name>牧羊双子</Name>
+        <BList><BIP Port="9030">221.122.108.12</BIP></BList><PIP>221.122.108.10</PIP><PPort>80</PPort>
+        <Arglist><Args Gamecode="11">IP:0:221.122.119.181:9013</Args></Arglist></Region>
+        <Region Code="36"><Name>金牛</Name><BList><BIP Port="9030">221.122.119.158</BIP></BList>
+        <PIP>221.122.119.156</PIP><PPort>80</PPort><Arglist><Args Gamecode="11">IP:20:221.122.119.161:9013</Args></Arglist></Region>
+        <Region Code="37"><Name>缺少更新配置</Name><BList><BIP Port="9030">127.0.0.1</BIP></BList>
+        <Arglist><Args Gamecode="11">IP:0:127.0.0.1:9013</Args></Arglist></Region></Regions></Regionlist>
+        """
+        let file = base.appendingPathComponent("regions.xml")
+        try Data(xml.utf8).write(to: file)
+        let regions = try Installation.loadRegions(at: file)
+        let installation = Installation(bottle: base, wine: base, launcher: base, gameDirectory: base, regions: regions)
+        XCTAssertEqual(try GameUpdater.arguments(installation: installation, region: regions[0]), ["221.122.108.10", "80"])
+        XCTAssertEqual(try GameUpdater.arguments(installation: installation, region: regions[1]), ["221.122.119.156", "80"])
+        XCTAssertThrowsError(try GameUpdater.arguments(installation: installation, region: regions[2]))
+        var invalid = regions[0]; invalid.patchServer = BillingEndpoint(host: "invalid host", port: 80)
+        XCTAssertThrowsError(try GameUpdater.arguments(installation: installation, region: invalid))
+        let games = GameActivity(processNames: "C:\\Program Files (x86)\\PlayOnline\\魔力宝贝\\cg_se_3000.exe\n/Applications/Safari.app/Contents/MacOS/Safari")
+        XCTAssertTrue(games.gameRunning)
+        XCTAssertThrowsError(try games.requireUpdateAllowed())
+        let patcher = GameActivity(processNames: "Z:\\中文路径\\Patcher_PUK3.CGLauncher-test.exe")
+        XCTAssertTrue(patcher.updaterRunning)
+        XCTAssertThrowsError(try patcher.requireUpdateAllowed())
+        XCTAssertTrue(GameActivity(processNames: "C:\\Game\\PATCHER_PUK3.BAK.EXE").updaterRunning)
+        let idle = GameActivity(processNames: "/Applications/CGLauncher.app/Contents/MacOS/CGLauncher\nC:\\Game\\POLCN_Launcher.exe")
+        try idle.requireUpdateAllowed()
+        XCTAssertFalse(idle.gameRunning || idle.updaterRunning)
+        try GameUpdater.validateExitCode(100)
+        XCTAssertThrowsError(try GameUpdater.validateExitCode(0))
+        XCTAssertThrowsError(try GameUpdater.validateExitCode(101))
+        XCTAssertThrowsError(try GameUpdater.validateExitCode(102))
+        try GameUpdater.validateLog(Data("开始检查test.bin。\n与服务器一致，无需更新。\n检查完毕，准备启动游戏。".utf8))
+        XCTAssertThrowsError(try GameUpdater.validateLog(Data("旧版或不完整日志".utf8)))
+        let failed = "开始检查test.bin。\n下载过程中发生错误，无法更新。\n检查完毕，准备启动游戏。"
+        XCTAssertThrowsError(try GameUpdater.validateLog(Data(failed.utf8)))
+        // The official patcher can return 100 despite a failed file: check its log too.
+        let retry = "开始检查test.bin。\n下载失败。\n开始检查test.bin。\n与服务器一致，无需更新。\n检查完毕，准备启动游戏。"
+        try GameUpdater.validateLog(Data(retry.utf8))
+        let repaired = "开始检查test.bin。\n本地文件哈希值：AAA\n服务器哈希值：BBB\n下载失败。\n本地文件哈希值：BBB\n检查完毕，准备启动游戏。"
+        try GameUpdater.validateLog(Data(repaired.utf8))
+        XCTAssertThrowsError(try GameUpdater.validateLog(Data("开始检查test.bin。\n本地文件哈希值：AAA\n服务器哈希值：AAA\n追加失败。\n检查完毕，准备启动游戏。".utf8)))
+    }
     func testSavedAccountsAndFailedAuthentication() throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("CGLauncherTests-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }

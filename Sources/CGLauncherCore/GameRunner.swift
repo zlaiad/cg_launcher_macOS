@@ -18,6 +18,9 @@ public enum GameRunner {
         return packet
     }
     public static func start(installation: Installation, session: AuthenticatedSession, account: GameAccount, region: GameRegion, helper: URL) throws -> Process {
+        guard try !GameActivity.current().updaterRunning else {
+            throw LauncherError.message("游戏正在更新，请等待更新完成后再启动。")
+        }
         guard FileManager.default.fileExists(atPath: helper.path) else { throw LauncherError.message("启动桥接程序缺失，请重新构建应用。") }
         var packet = try prepareRequest(installation: installation, session: session, account: account, region: region)
         defer { packet.resetBytes(in: packet.startIndex ..< packet.endIndex) }
