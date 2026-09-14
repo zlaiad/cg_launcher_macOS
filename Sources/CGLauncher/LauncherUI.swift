@@ -179,6 +179,8 @@ import CGLauncherCore
 struct LauncherView: View {
     @StateObject private var model = LauncherModel()
     @Environment(\.colorScheme) private var colorScheme
+    private let appIcon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+        .flatMap { NSImage(contentsOf: $0) }
     private var accent: Color {
         colorScheme == .dark ? Color(red: 0.47, green: 0.78, blue: 0.71) : Color(red: 0.16, green: 0.46, blue: 0.43)
     }
@@ -207,11 +209,10 @@ struct LauncherView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 27, weight: .medium)).foregroundStyle(.white)
-                .frame(width: 52, height: 52)
-                .background(LinearGradient(colors: [Color(red: 0.22, green: 0.52, blue: 0.48), Color(red: 0.10, green: 0.28, blue: 0.30)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 15))
+            if let appIcon {
+                Image(nsImage: appIcon).resizable().scaledToFit()
+                    .frame(width: 60, height: 60).accessibilityLabel("魔力宝贝图标")
+            }
             VStack(alignment: .leading, spacing: 5) {
                 Text("魔力宝贝").font(.system(size: 24, weight: .semibold))
                 Text("怀旧服").font(.system(size: 12)).foregroundStyle(.secondary)
