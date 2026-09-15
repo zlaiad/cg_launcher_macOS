@@ -177,7 +177,7 @@ import CGLauncherCore
 }
 
 struct LauncherView: View {
-    @StateObject private var model = LauncherModel()
+    @ObservedObject var model: LauncherModel
     @Environment(\.colorScheme) private var colorScheme
     private let appIcon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
         .flatMap { NSImage(contentsOf: $0) }
@@ -344,17 +344,46 @@ struct LauncherView: View {
     }
 }
 
-final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class LauncherAppDelegate: NSObject, NSApplicationDelegate {
+    var showLauncher: (() -> Void)?
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { sender.windows.first(where: { $0.canBecomeKey })?.makeKeyAndOrderFront(nil) }
-        return true
+        // Cmd+W destroys the SwiftUI window. Open the scene by ID instead of
+        // searching NSApplication.windows for a window that no longer exists.
+        showLauncher?()
+        sender.activate(ignoringOtherApps: true)
+        return false
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+}
+
+private struct LauncherRootView: View {
+    @ObservedObject var model: LauncherModel
+    let appDelegate: LauncherAppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        LauncherView(model: model)
+            .onAppear {
+                // Keep the scene action at application scope so Dock/Finder
+                // reopening still works after this view has been closed.
+                appDelegate.showLauncher = { openWindow(id: CGLauncherApp.mainWindowID) }
+            }
     }
 }
 
 struct CGLauncherApp: App {
+    static let mainWindowID = "launcher"
     @NSApplicationDelegateAdaptor(LauncherAppDelegate.self) private var appDelegate
+    // Account edits, authentication and child-process ownership outlive windows.
+    @StateObject private var model = LauncherModel()
     var body: some Scene {
-        WindowGroup("魔力宝贝启动器") { LauncherView() }
+        Window("魔力宝贝启动器", id: Self.mainWindowID) {
+            LauncherRootView(model: model, appDelegate: appDelegate)
+        }
             .windowStyle(.hiddenTitleBar).windowResizability(.contentSize)
             .commands { CommandGroup(replacing: .newItem) {} }
     }
